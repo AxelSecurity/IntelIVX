@@ -1,53 +1,53 @@
 # URL Analyzer
 
-Servizio di analisi URL per pipeline di email security. Analizza URL estratti da email tramite browser reale (Playwright/Chromium), estrae segnali di sicurezza e li valuta con un agente AI (Azure AI Foundry) per rilevare phishing, credential harvesting e malware.
+A URL analysis service for email security pipelines. Analyzes URLs extracted from emails using a real browser (Playwright/Chromium), extracts security signals, and evaluates them with an AI agent (Azure AI Foundry) to detect phishing, credential harvesting, and malware.
 
 ---
 
-## Funzionalità
+## Features
 
-- **Browser-based analysis** — navigazione reale con Chromium headless, nessun evasion possibile
-- **Redirect chain tracking** — cattura tutti i redirect (HTTP 3xx, meta-refresh, JS setTimeout)
-- **SSL/TLS inspection** — verifica certificati: emittente, scadenza, self-signed, emesso di recente
-- **Visual OCR** — estrae testo da immagini e loghi tramite Tesseract per rilevare brand impersonation visiva
-- **AI verdict** — agente Azure AI Foundry (GPT-4o) classifica ogni URL con confidence score e motivazione
-- **Whitelist / Blacklist** — override manuale per gestire falsi positivi e negativi, persistente su file
-- **Trellix IVX integration** — endpoint sincrono nativo per il modulo "Integrate Your Intelligence"
-- **Swagger UI** — documentazione API interattiva su `/docs`
+- **Browser-based analysis** — real Chromium headless navigation, no evasion possible
+- **Redirect chain tracking** — captures all redirects (HTTP 3xx, meta-refresh, JS setTimeout)
+- **SSL/TLS inspection** — certificate verification: issuer, expiry, self-signed, recently issued
+- **Visual OCR** — extracts text from images and logos via Tesseract to detect visual brand impersonation
+- **AI verdict** — Azure AI Foundry agent (GPT-4o) classifies each URL with confidence score and reasoning
+- **Whitelist / Blacklist** — manual override to manage false positives and negatives, persisted to file
+- **Trellix IVX integration** — native synchronous endpoint for the "Integrate Your Intelligence" module
+- **Swagger UI** — interactive API documentation at `/docs`
 
 ---
 
-## Verdetti
+## Verdicts
 
-| Verdict | Azione | Quando |
+| Verdict | Action | When |
 |---|---|---|
-| `safe` | `allow` | Nessun indicatore di rischio |
-| `suspicious` | `quarantine` | Anomalie senza impersonation specifica |
+| `safe` | `allow` | No significant risk indicators |
+| `suspicious` | `quarantine` | Anomalies without specific brand impersonation |
 | `malicious` | `block` | Brand impersonation, credential harvesting, HTTP login form |
 
 ---
 
-## Requisiti
+## Requirements
 
 - Docker + Docker Compose
-- Account Azure con Azure AI Foundry Agent configurato
-- App Registration Azure AD con ruolo **Foundry User** sul progetto Foundry
+- Azure account with a configured Azure AI Foundry Agent
+- Azure AD App Registration with the **Foundry User** role on the Foundry project
 
 ---
 
-## Configurazione
+## Configuration
 
 ```bash
 cp .env.example .env
 ```
 
-Compila `.env`:
+Fill in `.env`:
 
 ```env
 # Azure AI Foundry Agent
 FOUNDRY_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>
-FOUNDRY_AGENT_NAME=<nome-agente>
-FOUNDRY_AGENT_VERSION=<versione>
+FOUNDRY_AGENT_NAME=<agent-name>
+FOUNDRY_AGENT_VERSION=<version>
 
 # Azure AD — Service Principal
 AZURE_TENANT_ID=<tenant-id>
@@ -63,39 +63,39 @@ PLAYWRIGHT_OCR=true
 N_WORKERS=3
 JOB_TTL_SECONDS=3600
 
-# Trellix IVX — Token Auth (opzionale)
+# Trellix IVX — Token Auth (optional)
 TRELLIX_API_TOKEN=
 ```
 
 ---
 
-## Avvio
+## Getting Started
 
 ```bash
 docker compose up --build
 ```
 
-Il servizio sarà disponibile su `http://localhost:8081`.
+The service will be available at `http://localhost:8081`.  
 Swagger UI: `http://localhost:8081/docs`
 
 ---
 
 ## API
 
-### Analisi asincrona (email wrapper)
+### Async analysis (email wrapper)
 
 ```bash
-# Sottometti URL da analizzare
+# Submit URLs for analysis
 curl -X POST http://localhost:8081/analyze/urls \
   -H "Content-Type: application/json" \
   -d '{"urls": ["https://example.com"]}'
 # → {"job_id": "abc-123", "status": "pending", "urls_count": 1}
 
-# Polling risultato
+# Poll for results
 curl http://localhost:8081/jobs/abc-123
 ```
 
-**Risposta job completato:**
+**Completed job response:**
 ```json
 {
   "job_id": "abc-123",
@@ -108,14 +108,14 @@ curl http://localhost:8081/jobs/abc-123
       "risk_indicators": [],
       "reason": "...",
       "recommended_action": "allow",
-      "ssl_info": { ... },
+      "ssl_info": { "..." },
       "chain_verdicts": []
     }
   ]
 }
 ```
 
-### Analisi sincrona — Trellix IVX
+### Synchronous analysis — Trellix IVX
 
 ```bash
 curl "http://localhost:8081/trellix/analyze?url=https://example.com"
@@ -136,31 +136,31 @@ curl "http://localhost:8081/trellix/analyze?url=https://example.com"
 ### Whitelist / Blacklist
 
 ```bash
-# Aggiungi dominio alla whitelist (falso positivo)
+# Add domain to whitelist (false positive override)
 curl -X POST http://localhost:8081/whitelist \
   -H "Content-Type: application/json" \
-  -d '{"pattern": "paypal.com", "note": "Dominio legittimo"}'
+  -d '{"pattern": "paypal.com", "note": "Legitimate domain"}'
 
-# Aggiungi dominio alla blacklist (falso negativo)
+# Add domain to blacklist (false negative override)
 curl -X POST http://localhost:8081/blacklist \
   -H "Content-Type: application/json" \
-  -d '{"pattern": "phishing-domain.xyz", "note": "Phishing confermato"}'
+  -d '{"pattern": "phishing-domain.xyz", "note": "Confirmed phishing"}'
 
-# Lista completa
+# List all entries
 curl http://localhost:8081/whitelist
 curl http://localhost:8081/blacklist
 
-# Rimozione
+# Remove entry
 curl -X DELETE http://localhost:8081/whitelist/paypal.com
 ```
 
 ---
 
-## Integrazione Trellix IVX
+## Trellix IVX Integration
 
-Configura il modulo **"Integrate Your Intelligence"** in Trellix IVX:
+Configure the **"Integrate Your Intelligence"** module in Trellix IVX:
 
-| Campo | Valore |
+| Field | Value |
 |---|---|
 | Engine Name | `URL Analyzer` |
 | API Endpoint | `<host>:8081/trellix/analyze` |
@@ -171,11 +171,11 @@ Configura il modulo **"Integrate Your Intelligence"** in Trellix IVX:
 | Object Type | `URLs` |
 | Placement | `Query Param` |
 | Authorization | `Token Auth` / `Bearer` |
-| Token | valore di `TRELLIX_API_TOKEN` |
+| Token | value of `TRELLIX_API_TOKEN` |
 
 ---
 
-## Architettura
+## Architecture
 
 ```
 [Email Wrapper / Trellix IVX]
@@ -205,42 +205,42 @@ Configura il modulo **"Integrate Your Intelligence"** in Trellix IVX:
 
 ---
 
-## Struttura progetto
+## Project Structure
 
 ```
 url_analyzer/
-├── config.py              # Settings da .env
-├── main.py                # FastAPI app, endpoints, lifespan
+├── config.py                  # Settings loaded from .env
+├── main.py                    # FastAPI app, endpoints, lifespan
 ├── models/
-│   ├── job.py             # PlaywrightResult, URLVerdict, SSLInfo
-│   ├── requests.py        # URLAnalysisRequest, ListEntryRequest
-│   └── responses.py       # Response models
+│   ├── job.py                 # PlaywrightResult, URLVerdict, SSLInfo
+│   ├── requests.py            # URLAnalysisRequest, ListEntryRequest
+│   └── responses.py           # Response models
 ├── services/
 │   ├── playwright_service.py  # Browser automation + OCR
 │   ├── openai_service.py      # Azure AI Foundry agent client
-│   ├── job_service.py         # Job creation e retrieval
+│   ├── job_service.py         # Job creation and retrieval
 │   └── list_service.py        # Whitelist/Blacklist CRUD
 ├── storage/
-│   └── job_store.py       # In-memory job store con TTL
+│   └── job_store.py           # In-memory job store with TTL
 └── workers/
-    └── analyzer.py        # Worker loop, _analyze_simple, _analyze_with_chain
+    └── analyzer.py            # Worker loop, _analyze_simple, _analyze_with_chain
 ```
 
 ---
 
-## Variabili di configurazione
+## Environment Variables
 
-| Variabile | Default | Descrizione |
+| Variable | Default | Description |
 |---|---|---|
 | `FOUNDRY_ENDPOINT` | — | Azure AI Foundry project endpoint |
-| `FOUNDRY_AGENT_NAME` | — | Nome agente nel portale Foundry |
-| `FOUNDRY_AGENT_VERSION` | — | Versione agente pubblicata |
+| `FOUNDRY_AGENT_NAME` | — | Agent name in the Foundry portal |
+| `FOUNDRY_AGENT_VERSION` | — | Published agent version |
 | `AZURE_TENANT_ID` | `""` | Azure AD tenant ID |
 | `AZURE_CLIENT_ID` | `""` | App Registration client ID |
 | `AZURE_CLIENT_SECRET` | `""` | App Registration client secret |
-| `PLAYWRIGHT_TIMEOUT_MS` | `30000` | Timeout navigazione Playwright (ms) |
-| `PLAYWRIGHT_SCREENSHOT` | `false` | Includi screenshot nel risultato |
-| `PLAYWRIGHT_OCR` | `true` | OCR su screenshot per brand visiva |
-| `N_WORKERS` | `3` | Worker paralleli per analisi |
-| `JOB_TTL_SECONDS` | `3600` | TTL job in memoria (secondi) |
-| `TRELLIX_API_TOKEN` | `""` | Bearer token per endpoint Trellix |
+| `PLAYWRIGHT_TIMEOUT_MS` | `30000` | Playwright navigation timeout (ms) |
+| `PLAYWRIGHT_SCREENSHOT` | `false` | Include screenshot in results |
+| `PLAYWRIGHT_OCR` | `true` | OCR on screenshot for visual brand detection |
+| `N_WORKERS` | `3` | Parallel analysis workers |
+| `JOB_TTL_SECONDS` | `3600` | Job TTL in memory (seconds) |
+| `TRELLIX_API_TOKEN` | `""` | Bearer token for Trellix endpoint auth |
