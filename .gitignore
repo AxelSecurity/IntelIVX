@@ -20,3 +20,6 @@ lists.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude
+.claude/
