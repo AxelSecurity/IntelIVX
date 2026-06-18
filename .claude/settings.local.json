@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__n8n-mcp__get_sdk_reference",
+      "mcp__n8n-mcp__search_nodes",
+      "mcp__n8n-mcp__create_workflow_from_code",
+      "mcp__n8n-mcp__get_node_types",
+      "mcp__n8n-mcp__update_workflow"
+    ]
+  }
+}

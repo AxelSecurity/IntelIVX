@@ -1,0 +1,22 @@
+# Variabili d'ambiente — contengono chiavi API e credenziali Azure
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Docker
+*.log
+
+# Dati operativi runtime — non codice sorgente
+lists.json
+
+# OS
+.DS_Store
+Thumbs.db

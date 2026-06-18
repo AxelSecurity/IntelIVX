@@ -1,0 +1,10 @@
+services:
+  url-analyzer:
+    build: .
+    ports:
+      - "8081:8081"
+    env_file: .env
+    environment:
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    restart: unless-stopped
+    shm_size: "256mb"
