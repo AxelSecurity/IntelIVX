@@ -21,6 +21,7 @@ from url_analyzer.models.responses import (
 from url_analyzer.services.job_service import cancel_job, create_job, get_job, get_queue
 from url_analyzer.services.list_service import list_service
 from url_analyzer.services.playwright_service import playwright_service
+from url_analyzer.storage.verdict_cache import verdict_cache
 from url_analyzer.workers.analyzer import _analyze_simple, _analyze_with_chain, cleanup_loop, start_workers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -54,6 +55,9 @@ async def lifespan(app: FastAPI):
 
     await list_service.load()
     logger.info("Whitelist/Blacklist loaded")
+
+    await verdict_cache.init()
+    logger.info("Verdict cache initialized")
 
     # eicar.org è il dominio EICAR standard usato da Trellix IVX come health check URL.
     # Deve sempre rispondere malicious — lo aggiungiamo alla blacklist se non presente.
@@ -231,9 +235,26 @@ async def trellix_analyze(
             )
         )
 
-    # ── 2. Analisi completa Playwright + OpenAI (timeout 55s < Trellix 60s) ───
+    # ── 2. Check cache SQLite ─────────────────────────────────────────────────
+    cached = await verdict_cache.get(url)
+    if cached:
+        sig_parts = cached.risk_indicators[:3]
+        signature = " | ".join(sig_parts) if sig_parts else cached.verdict.upper()
+        return TrellixAnalysisResponse(
+            result=TrellixResult(
+                verdict=cached.verdict,
+                signature=signature,
+                confidence=cached.confidence,
+                recommended_action=cached.recommended_action,
+                reason=cached.reason,
+            )
+        )
+
+    # ── 3. Analisi completa Playwright + OpenAI (timeout 55s < Trellix 60s) ───
     try:
         verdict = await asyncio.wait_for(_analyze_simple(url), timeout=55.0)
+
+        await verdict_cache.set(url, verdict)
 
         sig_parts = verdict.risk_indicators[:3]
         signature = " | ".join(sig_parts) if sig_parts else verdict.verdict.upper()

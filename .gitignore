@@ -16,6 +16,7 @@ venv/
 
 # Dati operativi runtime — non codice sorgente
 lists.json
+data/
 
 # OS
 .DS_Store

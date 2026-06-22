@@ -8,3 +8,5 @@ services:
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
     restart: unless-stopped
     shm_size: "256mb"
+    volumes:
+      - ./data:/app/data

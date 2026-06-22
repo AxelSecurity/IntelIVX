@@ -9,6 +9,7 @@ from url_analyzer.services.list_service import list_service
 from url_analyzer.services.openai_service import openai_service
 from url_analyzer.services.playwright_service import playwright_service
 from url_analyzer.storage.job_store import job_store
+from url_analyzer.storage.verdict_cache import verdict_cache
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +90,15 @@ async def _process_job(job: Job) -> None:
                 logger.info("%s matched %s → %s", url, list_type, verdict.recommended_action)
                 await job_store.append_result(job.job_id, verdict)
                 continue
+            # ── Check cache SQLite ────────────────────────────────────────────
+            cached = await verdict_cache.get(url)
+            if cached:
+                logger.info("Cache HIT for job: %s → %s", url, cached.verdict)
+                await job_store.append_result(job.job_id, cached)
+                continue
             # ── Analisi completa Playwright + OpenAI ─────────────────────────
             verdict = await _analyze_with_chain(url)
+            await verdict_cache.set(url, verdict)
             await job_store.append_result(job.job_id, verdict)
         except Exception as exc:
             logger.error("Error analyzing %s: %s", url, exc)
@@ -143,4 +151,5 @@ async def cleanup_loop(interval_seconds: int = 300) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         await job_store.cleanup_expired()
-        logger.debug("Expired jobs cleaned up")
+        await verdict_cache.cleanup_expired()
+        logger.debug("Expired jobs and cache entries cleaned up")
