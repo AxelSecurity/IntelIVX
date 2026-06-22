@@ -12,6 +12,7 @@ A URL analysis service for email security pipelines. Analyzes URLs extracted fro
 - **Visual OCR** — extracts text from images and logos via Tesseract to detect visual brand impersonation
 - **AI verdict** — Azure AI Foundry agent (GPT-4o) classifies each URL with confidence score and reasoning
 - **Whitelist / Blacklist** — manual override to manage false positives and negatives, persisted to file
+- **SQLite verdict cache** — persistent cache of analysis results with per-verdict TTL; avoids re-analyzing known URLs
 - **Trellix IVX integration** — native synchronous endpoint for the "Integrate Your Intelligence" module
 - **Swagger UI** — interactive API documentation at `/docs`
 
@@ -182,8 +183,10 @@ Configure the **"Integrate Your Intelligence"** module in Trellix IVX:
           ↓
     [FastAPI :8081]
           ↓
-    [Job Queue]  ←→  [Whitelist/Blacklist]
+    [Job Queue]  ←→  [Whitelist/Blacklist]  (priority override)
           ↓
+    [SQLite Cache]  ←→  hit: immediate response
+          ↓ miss
   [Playwright Worker]
     Chromium headless
     Redirect chain tracking
@@ -192,6 +195,8 @@ Configure the **"Integrate Your Intelligence"** module in Trellix IVX:
           ↓
   [Azure AI Foundry Agent]
     GPT-4o verdict
+          ↓
+    [SQLite Cache]  ←→  save result
           ↓
     [Job Result]
 ```
@@ -221,7 +226,8 @@ url_analyzer/
 │   ├── job_service.py         # Job creation and retrieval
 │   └── list_service.py        # Whitelist/Blacklist CRUD
 ├── storage/
-│   └── job_store.py           # In-memory job store with TTL
+│   ├── job_store.py           # In-memory job store with TTL
+│   └── verdict_cache.py       # SQLite persistent verdict cache
 └── workers/
     └── analyzer.py            # Worker loop, _analyze_simple, _analyze_with_chain
 ```
@@ -244,3 +250,13 @@ url_analyzer/
 | `N_WORKERS` | `3` | Parallel analysis workers |
 | `JOB_TTL_SECONDS` | `3600` | Job TTL in memory (seconds) |
 | `TRELLIX_API_TOKEN` | `""` | Bearer token for Trellix endpoint auth |
+
+### Verdict Cache TTL
+
+| Verdict | TTL | Rationale |
+|---|---|---|
+| `malicious` | 30 days | Phishing domains remain active for weeks |
+| `suspicious` | 3 days | Re-evaluate frequently, may change |
+| `safe` | 7 days | Legitimate domains are stable but not permanent |
+
+The SQLite database is stored at `./data/verdict_cache.db` on the host and persists across container rebuilds via Docker volume mount.
