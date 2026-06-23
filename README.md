@@ -253,10 +253,12 @@ url_analyzer/
 
 ### Verdict Cache TTL
 
-| Verdict | TTL | Rationale |
-|---|---|---|
-| `malicious` | 30 days | Phishing domains remain active for weeks |
-| `suspicious` | 3 days | Re-evaluate frequently, may change |
-| `safe` | 7 days | Legitimate domains are stable but not permanent |
+| Verdict | Cached | TTL | Rationale |
+|---|---|---|---|
+| `malicious` | ✅ Yes | 30 days | Phishing domains remain active for weeks |
+| `suspicious` | ✅ Yes | 3 days | Re-evaluate frequently, may change |
+| `safe` | ❌ No | — | Always re-analyzed to catch future compromises |
+
+Safe URLs are never stored in the cache — every request triggers a full Playwright + AI analysis so that a previously clean domain that later becomes malicious is always caught.
 
 The SQLite database is stored at `./data/verdict_cache.db` on the host and persists across container rebuilds via Docker volume mount.
