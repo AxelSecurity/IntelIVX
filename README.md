@@ -13,6 +13,7 @@ A URL analysis service for email security pipelines. Analyzes URLs extracted fro
 - **AI verdict** — Azure AI Foundry agent (GPT-4o) classifies each URL with confidence score and reasoning
 - **Whitelist / Blacklist** — manual override to manage false positives and negatives, persisted to file
 - **SQLite verdict cache** — persistent cache of analysis results with per-verdict TTL; avoids re-analyzing known URLs
+- **IOC Feed** — exposes detected malicious/suspicious URLs as a threat intelligence feed (JSON, TXT, CSV) for firewalls, proxies, and SIEMs
 - **Trellix IVX integration** — native synchronous endpoint for the "Integrate Your Intelligence" module
 - **Swagger UI** — interactive API documentation at `/docs`
 
@@ -66,6 +67,9 @@ JOB_TTL_SECONDS=3600
 
 # Trellix IVX — Token Auth (optional)
 TRELLIX_API_TOKEN=
+
+# IOC Feed — Token Auth (optional)
+IOC_API_TOKEN=
 ```
 
 ---
@@ -131,6 +135,40 @@ curl "http://localhost:8081/trellix/analyze?url=https://example.com"
     "recommended_action": "block",
     "reason": "..."
   }
+}
+```
+
+### IOC Feed
+
+```bash
+# All active IOCs (malicious + suspicious) — JSON for SIEM
+curl "http://localhost:8081/ioc"
+
+# Malicious only — TXT for firewall/proxy blocklist (one URL per line)
+curl "http://localhost:8081/ioc?verdict=malicious&format=txt"
+
+# Last 24 hours — CSV
+curl "http://localhost:8081/ioc?since=24h&format=csv"
+```
+
+**JSON response:**
+```json
+{
+  "count": 1,
+  "generated_at": "2026-06-23T10:00:00Z",
+  "filters": {"verdict": "all", "since": null, "limit": 1000},
+  "entries": [
+    {
+      "url": "https://phishing-domain.xyz/login",
+      "domain": "phishing-domain.xyz",
+      "verdict": "malicious",
+      "confidence": 0.99,
+      "risk_indicators": ["Brand impersonation PayPal", "Login form on mismatched domain"],
+      "recommended_action": "block",
+      "analyzed_at": "2026-06-20T14:32:00Z",
+      "expires_at": "2026-07-20T14:32:00Z"
+    }
+  ]
 }
 ```
 
@@ -250,6 +288,7 @@ url_analyzer/
 | `N_WORKERS` | `3` | Parallel analysis workers |
 | `JOB_TTL_SECONDS` | `3600` | Job TTL in memory (seconds) |
 | `TRELLIX_API_TOKEN` | `""` | Bearer token for Trellix endpoint auth |
+| `IOC_API_TOKEN` | `""` | Bearer token for IOC feed endpoint auth |
 
 ### Verdict Cache TTL
 
