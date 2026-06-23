@@ -22,5 +22,6 @@ data/
 .DS_Store
 Thumbs.db
 
-# Claude
+# Claude — internal development context, not for public repos
 .claude/
+CLAUDE.md
