@@ -1,16 +1,23 @@
 import asyncio
+import csv
+import io
+import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import unquote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
+from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from url_analyzer.config import settings
 from url_analyzer.models.requests import ListEntryRequest, URLAnalysisRequest
 from url_analyzer.models.responses import (
     HealthResponse,
+    IOCEntry,
+    IOCFeedResponse,
     JobCreatedResponse,
     JobStatusResponse,
     ListEntryResponse,
@@ -44,6 +51,21 @@ async def _require_trellix_token(
             detail="Invalid or missing Bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+async def _require_ioc_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer_scheme),
+) -> None:
+    """Valida il token Bearer per /ioc se IOC_API_TOKEN è configurato nel .env."""
+    token = settings.ioc_api_token
+    if not token:
+        return
+    if credentials is None or credentials.credentials != token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
 
 _worker_tasks = []
 
@@ -291,6 +313,77 @@ async def trellix_analyze(
                 reason=f"Analysis failed ({exc}) — URL quarantined as precautionary measure",
             )
         )
+
+
+# ── IOC Feed ─────────────────────────────────────────────────────────────────
+
+_SINCE_MAP = {"1h": 1, "24h": 24, "7d": 168, "30d": 720}
+
+
+@app.get(
+    "/ioc",
+    tags=["IOC Feed"],
+    summary="IOC feed — list of malicious/suspicious URLs for security tools",
+)
+async def get_ioc_feed(
+    verdict: str = Query(
+        "all",
+        enum=["malicious", "suspicious", "all"],
+        description="Filter by verdict type",
+    ),
+    since: Optional[str] = Query(
+        None,
+        enum=["1h", "24h", "7d", "30d"],
+        description="Filter by analysis time window",
+    ),
+    format: str = Query(
+        "json",
+        enum=["json", "txt", "csv"],
+        description="Output format: json (SIEM), txt (firewall/proxy, one URL per line), csv",
+    ),
+    limit: int = Query(1000, ge=1, le=10000, description="Maximum number of entries"),
+    _: None = Depends(_require_ioc_token),
+):
+    since_hours = _SINCE_MAP.get(since) if since else None
+    verdicts = ["malicious", "suspicious"] if verdict == "all" else [verdict]
+    rows = await verdict_cache.get_ioc_feed(verdicts, since_hours, limit)
+
+    entries = []
+    for r in rows:
+        full = json.loads(r["full_json"])
+        entries.append({
+            "url": r["url"],
+            "domain": r["domain"],
+            "verdict": r["verdict"],
+            "confidence": r["confidence"],
+            "risk_indicators": full.get("risk_indicators", []),
+            "recommended_action": full.get("recommended_action", "block"),
+            "analyzed_at": r["analyzed_at"],
+            "expires_at": r["expires_at"],
+        })
+
+    if format == "txt":
+        body = "\n".join(e["url"] for e in entries)
+        return PlainTextResponse(content=body, media_type="text/plain")
+
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=["url", "domain", "verdict", "confidence",
+                        "recommended_action", "analyzed_at", "expires_at"],
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        writer.writerows(entries)
+        return PlainTextResponse(content=output.getvalue(), media_type="text/csv")
+
+    return IOCFeedResponse(
+        count=len(entries),
+        generated_at=datetime.now(timezone.utc),
+        filters={"verdict": verdict, "since": since, "limit": limit},
+        entries=[IOCEntry(**e) for e in entries],
+    )
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

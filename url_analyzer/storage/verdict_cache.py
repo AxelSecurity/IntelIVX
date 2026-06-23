@@ -108,6 +108,45 @@ class VerdictCache:
                 await db.commit()
         logger.info("Cache SET: %s → %s (TTL %d giorni)", url, verdict.verdict, ttl_days)
 
+    async def get_ioc_feed(
+        self,
+        verdicts: list[str],
+        since_hours: Optional[int],
+        limit: int,
+    ) -> list[dict]:
+        """
+        Restituisce IOC attivi (non scaduti) dal DB SQLite.
+        verdicts: es. ["malicious"] o ["malicious", "suspicious"]
+        since_hours: None = tutti, 24 = ultime 24h, 168 = ultimi 7 giorni, ecc.
+        """
+        now = datetime.now(timezone.utc)
+        placeholders = ",".join("?" * len(verdicts))
+        params: list = [now.isoformat(), *verdicts]
+
+        since_clause = ""
+        if since_hours is not None:
+            since_dt = (now - timedelta(hours=since_hours)).isoformat()
+            since_clause = "AND analyzed_at >= ?"
+            params.append(since_dt)
+
+        params.append(limit)
+
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"""
+                SELECT url, domain, verdict, confidence, full_json, analyzed_at, expires_at
+                FROM verdict_cache
+                WHERE expires_at > ? AND verdict IN ({placeholders})
+                {since_clause}
+                ORDER BY analyzed_at DESC
+                LIMIT ?
+                """,
+                params,
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
     async def cleanup_expired(self) -> int:
         """Rimuove le entry scadute. Chiamata dal cleanup_loop ogni 5 minuti."""
         now = datetime.now(timezone.utc).isoformat()

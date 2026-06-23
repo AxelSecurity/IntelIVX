@@ -40,6 +40,24 @@ class HealthResponse(BaseModel):
     jobs_in_queue: int
 
 
+class IOCEntry(BaseModel):
+    url: str
+    domain: str
+    verdict: str
+    confidence: float
+    risk_indicators: list[str]
+    recommended_action: str
+    analyzed_at: datetime
+    expires_at: datetime
+
+
+class IOCFeedResponse(BaseModel):
+    count: int
+    generated_at: datetime
+    filters: dict
+    entries: list[IOCEntry]
+
+
 class TrellixResult(BaseModel):
     verdict: str
     signature: str

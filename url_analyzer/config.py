@@ -27,5 +27,8 @@ class Settings(BaseSettings):
     # Trellix IVX — Token Auth (opzionale)
     trellix_api_token: str = ""
 
+    # IOC Feed — Token Auth (opzionale, separato da Trellix)
+    ioc_api_token: str = ""
+
 
 settings = Settings()
