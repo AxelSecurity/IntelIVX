@@ -13,7 +13,9 @@ A URL analysis service for email security pipelines. Analyzes URLs extracted fro
 - **AI verdict** — Azure AI Foundry agent (GPT-4o) classifies each URL with confidence score and reasoning
 - **Whitelist / Blacklist** — manual override to manage false positives and negatives, persisted to file
 - **SQLite verdict cache** — persistent cache of analysis results with per-verdict TTL; avoids re-analyzing known URLs
+- **Analysis history** — permanent audit log of all analyses (safe included) stored in SQLite
 - **IOC Feed** — exposes detected malicious/suspicious URLs as a threat intelligence feed (JSON, TXT, CSV) for firewalls, proxies, and SIEMs
+- **Web Dashboard** — authenticated web UI to visualize all analyses, statistics, charts, and manage whitelist/blacklist
 - **Trellix IVX integration** — native synchronous endpoint for the "Integrate Your Intelligence" module
 - **Swagger UI** — interactive API documentation at `/docs`
 
@@ -70,6 +72,11 @@ TRELLIX_API_TOKEN=
 
 # IOC Feed — Token Auth (optional)
 IOC_API_TOKEN=
+
+# Dashboard web UI
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=<choose-a-secure-password>
+DASHBOARD_SECRET_KEY=<generate-with: python3 -c "import uuid; print(uuid.uuid4())">
 ```
 
 ---
@@ -80,8 +87,30 @@ IOC_API_TOKEN=
 docker compose up --build
 ```
 
-The service will be available at `http://localhost:8081`.  
-Swagger UI: `http://localhost:8081/docs`
+| URL | Description |
+|---|---|
+| `http://localhost:8081` | API base |
+| `http://localhost:8081/docs` | Swagger UI |
+| `http://localhost:8081/dashboard` | Web Dashboard |
+
+---
+
+## Web Dashboard
+
+The dashboard provides a visual interface to monitor all analyses and manage the service.
+
+**Access:** `http://localhost:8081/dashboard` — protected by username/password login.
+
+**Features:**
+- **Stats cards** — total analyses, threats (malicious + suspicious), safe count
+- **Charts** — verdict distribution (pie) and analyses per day last 7 days (bar)
+- **Analysis table** — all analyses with filters (verdict, time window, domain search) and pagination
+- **Detail modal** — click any row to see full verdict details, risk indicators, and reasoning
+- **Per-row actions** — force re-analyze 🔄, add to whitelist ✅, add to blacklist 🚫
+- **List management** — add/remove whitelist and blacklist entries directly from the dashboard
+- **Auto-refresh** — updates every 30 seconds
+
+> The dashboard shows **all analyses including safe** via a permanent SQLite audit log (`analysis_history` table), separate from the verdict cache.
 
 ---
 
@@ -151,27 +180,6 @@ curl "http://localhost:8081/ioc?verdict=malicious&format=txt"
 curl "http://localhost:8081/ioc?since=24h&format=csv"
 ```
 
-**JSON response:**
-```json
-{
-  "count": 1,
-  "generated_at": "2026-06-23T10:00:00Z",
-  "filters": {"verdict": "all", "since": null, "limit": 1000},
-  "entries": [
-    {
-      "url": "https://phishing-domain.xyz/login",
-      "domain": "phishing-domain.xyz",
-      "verdict": "malicious",
-      "confidence": 0.99,
-      "risk_indicators": ["Brand impersonation PayPal", "Login form on mismatched domain"],
-      "recommended_action": "block",
-      "analyzed_at": "2026-06-20T14:32:00Z",
-      "expires_at": "2026-07-20T14:32:00Z"
-    }
-  ]
-}
-```
-
 ### Whitelist / Blacklist
 
 ```bash
@@ -234,9 +242,9 @@ Configure the **"Integrate Your Intelligence"** module in Trellix IVX:
   [Azure AI Foundry Agent]
     GPT-4o verdict
           ↓
-    [SQLite Cache]  ←→  save result
+    [SQLite Cache + Analysis History]  ←→  save result
           ↓
-    [Job Result]
+    [Job Result / Dashboard]
 ```
 
 **Stack:**
@@ -244,6 +252,8 @@ Configure the **"Integrate Your Intelligence"** module in Trellix IVX:
 - Playwright 1.60 (Chromium)
 - Tesseract OCR
 - Azure AI Foundry (GPT-4o)
+- SQLite (aiosqlite) — verdict cache + analysis history
+- Jinja2 + Tailwind CSS + Chart.js — web dashboard
 - Docker (`mcr.microsoft.com/playwright/python:v1.60.0-jammy`)
 
 ---
@@ -253,7 +263,7 @@ Configure the **"Integrate Your Intelligence"** module in Trellix IVX:
 ```
 url_analyzer/
 ├── config.py                  # Settings loaded from .env
-├── main.py                    # FastAPI app, endpoints, lifespan
+├── main.py                    # FastAPI app, endpoints, dashboard routes
 ├── models/
 │   ├── job.py                 # PlaywrightResult, URLVerdict, SSLInfo
 │   ├── requests.py            # URLAnalysisRequest, ListEntryRequest
@@ -265,7 +275,12 @@ url_analyzer/
 │   └── list_service.py        # Whitelist/Blacklist CRUD
 ├── storage/
 │   ├── job_store.py           # In-memory job store with TTL
-│   └── verdict_cache.py       # SQLite persistent verdict cache
+│   ├── verdict_cache.py       # SQLite persistent verdict cache
+│   └── analysis_history.py   # SQLite permanent audit log (all verdicts)
+├── templates/
+│   ├── base.html              # Dashboard base layout
+│   ├── login.html             # Login page
+│   └── dashboard.html         # Main dashboard
 └── workers/
     └── analyzer.py            # Worker loop, _analyze_simple, _analyze_with_chain
 ```
@@ -289,6 +304,9 @@ url_analyzer/
 | `JOB_TTL_SECONDS` | `3600` | Job TTL in memory (seconds) |
 | `TRELLIX_API_TOKEN` | `""` | Bearer token for Trellix endpoint auth |
 | `IOC_API_TOKEN` | `""` | Bearer token for IOC feed endpoint auth |
+| `DASHBOARD_USERNAME` | `admin` | Dashboard login username |
+| `DASHBOARD_PASSWORD` | `""` | Dashboard login password |
+| `DASHBOARD_SECRET_KEY` | `""` | Secret key for session cookie signing |
 
 ### Verdict Cache TTL
 
@@ -298,6 +316,6 @@ url_analyzer/
 | `suspicious` | ✅ Yes | 3 days | Re-evaluate frequently, may change |
 | `safe` | ❌ No | — | Always re-analyzed to catch future compromises |
 
-Safe URLs are never stored in the cache — every request triggers a full Playwright + AI analysis so that a previously clean domain that later becomes malicious is always caught.
+Safe URLs are never stored in the cache — every request triggers a full Playwright + AI analysis so that a previously clean domain that later becomes malicious is always caught. All analyses (including safe) are recorded in the `analysis_history` audit log for dashboard visibility.
 
 The SQLite database is stored at `./data/verdict_cache.db` on the host and persists across container rebuilds via Docker volume mount.

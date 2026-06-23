@@ -30,5 +30,10 @@ class Settings(BaseSettings):
     # IOC Feed — Token Auth (opzionale, separato da Trellix)
     ioc_api_token: str = ""
 
+    # Dashboard web UI
+    dashboard_username: str = "admin"
+    dashboard_password: str = ""          # obbligatorio per usare la dashboard
+    dashboard_secret_key: str = ""        # chiave per firmare i cookie di sessione
+
 
 settings = Settings()

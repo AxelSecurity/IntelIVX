@@ -1,0 +1,387 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — URL Analyzer{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-screen-2xl mx-auto space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <h1 class="text-xl font-semibold">Analysis Dashboard</h1>
+        <span id="last-updated" class="text-xs text-gray-500"></span>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Total -->
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5">
+            <p class="text-xs text-gray-400 uppercase tracking-wider mb-1">Total Analyses</p>
+            <p id="stat-total" class="text-4xl font-bold text-white">—</p>
+        </div>
+        <!-- Threats -->
+        <div class="bg-gray-900 border border-red-900/50 rounded-xl p-5">
+            <p class="text-xs text-gray-400 uppercase tracking-wider mb-1">Threats Detected</p>
+            <p id="stat-threats" class="text-4xl font-bold text-red-400">—</p>
+            <div class="flex gap-4 mt-2 text-xs text-gray-500">
+                <span><span id="stat-malicious" class="text-red-400 font-medium">—</span> malicious</span>
+                <span><span id="stat-suspicious" class="text-yellow-400 font-medium">—</span> suspicious</span>
+            </div>
+        </div>
+        <!-- Safe -->
+        <div class="bg-gray-900 border border-green-900/50 rounded-xl p-5">
+            <p class="text-xs text-gray-400 uppercase tracking-wider mb-1">Safe</p>
+            <p id="stat-safe" class="text-4xl font-bold text-green-400">—</p>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5">
+            <h2 class="text-sm font-medium text-gray-300 mb-4">Verdict Distribution</h2>
+            <div class="flex items-center justify-center h-48">
+                <canvas id="chart-pie"></canvas>
+            </div>
+        </div>
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5">
+            <h2 class="text-sm font-medium text-gray-300 mb-4">Analyses — Last 7 Days</h2>
+            <div class="h-48">
+                <canvas id="chart-bar"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters + Table -->
+    <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+        <!-- Filters -->
+        <div class="px-5 py-4 border-b border-gray-700 flex flex-wrap gap-3 items-center">
+            <select id="filter-verdict" onchange="loadTable(1)"
+                    class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500">
+                <option value="">All verdicts</option>
+                <option value="malicious">Malicious</option>
+                <option value="suspicious">Suspicious</option>
+                <option value="safe">Safe</option>
+            </select>
+            <select id="filter-since" onchange="loadTable(1)"
+                    class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500">
+                <option value="">All time</option>
+                <option value="1h">Last hour</option>
+                <option value="24h">Last 24h</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+            </select>
+            <input id="filter-domain" type="text" placeholder="Search domain…" oninput="debounceSearch()"
+                   class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 w-56">
+            <span id="table-count" class="text-xs text-gray-500 ml-auto"></span>
+        </div>
+
+        <!-- Table -->
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-xs text-gray-400 uppercase border-b border-gray-700">
+                    <tr>
+                        <th class="px-5 py-3 text-left">URL</th>
+                        <th class="px-5 py-3 text-left">Verdict</th>
+                        <th class="px-5 py-3 text-left">Confidence</th>
+                        <th class="px-5 py-3 text-left">Source</th>
+                        <th class="px-5 py-3 text-left">Date</th>
+                        <th class="px-5 py-3 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <tr><td colspan="6" class="px-5 py-8 text-center text-gray-500">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="px-5 py-3 border-t border-gray-700 flex items-center justify-between text-sm text-gray-400">
+            <button id="btn-prev" onclick="changePage(-1)"
+                    class="px-3 py-1 bg-gray-800 rounded hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">← Prev</button>
+            <span id="page-info">Page 1</span>
+            <button id="btn-next" onclick="changePage(1)"
+                    class="px-3 py-1 bg-gray-800 rounded hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">Next →</button>
+        </div>
+    </div>
+
+    <!-- Whitelist / Blacklist Management -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Whitelist -->
+        <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+            <div class="px-5 py-3 border-b border-gray-700 flex items-center justify-between">
+                <h2 class="text-sm font-medium text-green-400">✅ Whitelist</h2>
+                <span id="wl-count" class="text-xs text-gray-500"></span>
+            </div>
+            <div class="p-4 space-y-3">
+                <div class="flex gap-2">
+                    <input id="wl-input" type="text" placeholder="domain.com"
+                           class="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-green-500">
+                    <button onclick="addList('whitelist')"
+                            class="bg-green-700 hover:bg-green-600 text-white text-sm px-3 py-1.5 rounded transition-colors">Add</button>
+                </div>
+                <div id="wl-list" class="space-y-1 max-h-40 overflow-y-auto text-xs"></div>
+            </div>
+        </div>
+        <!-- Blacklist -->
+        <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+            <div class="px-5 py-3 border-b border-gray-700 flex items-center justify-between">
+                <h2 class="text-sm font-medium text-red-400">🚫 Blacklist</h2>
+                <span id="bl-count" class="text-xs text-gray-500"></span>
+            </div>
+            <div class="p-4 space-y-3">
+                <div class="flex gap-2">
+                    <input id="bl-input" type="text" placeholder="domain.com"
+                           class="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-red-500">
+                    <button onclick="addList('blacklist')"
+                            class="bg-red-700 hover:bg-red-600 text-white text-sm px-3 py-1.5 rounded transition-colors">Add</button>
+                </div>
+                <div id="bl-list" class="space-y-1 max-h-40 overflow-y-auto text-xs"></div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Detail Modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+            <h3 class="font-medium">Analysis Detail</h3>
+            <button onclick="closeModal()" class="text-gray-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+        <div id="modal-content" class="px-5 py-4 space-y-4 text-sm"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1, totalPages = 1;
+let searchTimer = null;
+
+const VERDICT_BADGE = {
+    malicious: 'bg-red-900/50 text-red-300 border border-red-800',
+    suspicious: 'bg-yellow-900/50 text-yellow-300 border border-yellow-800',
+    safe: 'bg-green-900/50 text-green-300 border border-green-800',
+};
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+    const r = await fetch('/dashboard/api/stats');
+    const d = await r.json();
+    document.getElementById('stat-total').textContent = d.total;
+    document.getElementById('stat-threats').textContent = d.malicious + d.suspicious;
+    document.getElementById('stat-malicious').textContent = d.malicious;
+    document.getElementById('stat-suspicious').textContent = d.suspicious;
+    document.getElementById('stat-safe').textContent = d.safe;
+    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    drawCharts(d);
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+let pieChart = null, barChart = null;
+
+function drawCharts(d) {
+    const pieCtx = document.getElementById('chart-pie').getContext('2d');
+    if (pieChart) pieChart.destroy();
+    pieChart = new Chart(pieCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Malicious', 'Suspicious', 'Safe'],
+            datasets: [{
+                data: [d.malicious, d.suspicious, d.safe],
+                backgroundColor: ['#ef4444', '#eab308', '#22c55e'],
+                borderWidth: 0,
+            }]
+        },
+        options: { plugins: { legend: { labels: { color: '#9ca3af', font: { size: 11 } } } } }
+    });
+
+    const days = d.by_day || [];
+    const barCtx = document.getElementById('chart-bar').getContext('2d');
+    if (barChart) barChart.destroy();
+    barChart = new Chart(barCtx, {
+        type: 'bar',
+        data: {
+            labels: days.map(x => x.day.slice(5)),
+            datasets: [
+                { label: 'Malicious', data: days.map(x => x.malicious), backgroundColor: '#ef4444' },
+                { label: 'Suspicious', data: days.map(x => x.suspicious), backgroundColor: '#eab308' },
+                { label: 'Safe', data: days.map(x => x.safe), backgroundColor: '#22c55e' },
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { stacked: true, ticks: { color: '#6b7280' }, grid: { color: '#374151' } },
+                y: { stacked: true, ticks: { color: '#6b7280' }, grid: { color: '#374151' } }
+            },
+            plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 } } } }
+        }
+    });
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+async function loadTable(page) {
+    currentPage = page || currentPage;
+    const verdict = document.getElementById('filter-verdict').value;
+    const since = document.getElementById('filter-since').value;
+    const q = document.getElementById('filter-domain').value;
+
+    const params = new URLSearchParams({ page: currentPage });
+    if (verdict) params.set('verdict', verdict);
+    if (since) params.set('since', since);
+    if (q) params.set('q', q);
+
+    const r = await fetch('/dashboard/api/analyses?' + params);
+    const d = await r.json();
+    totalPages = d.pages;
+
+    document.getElementById('table-count').textContent = d.total + ' results';
+    document.getElementById('page-info').textContent = `Page ${d.page} of ${d.pages}`;
+    document.getElementById('btn-prev').disabled = d.page <= 1;
+    document.getElementById('btn-next').disabled = d.page >= d.pages;
+
+    const tbody = document.getElementById('table-body');
+    if (!d.entries.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-gray-500">No results</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = d.entries.map(e => `
+        <tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer"
+            onclick="showDetail(${JSON.stringify(e).replace(/"/g, '&quot;')})">
+            <td class="px-5 py-3 max-w-xs">
+                <span class="text-blue-400 hover:underline truncate block text-xs" title="${e.url}">${e.domain}</span>
+                <span class="text-gray-500 text-xs truncate block">${e.url.length > 60 ? e.url.slice(0,60)+'…' : e.url}</span>
+            </td>
+            <td class="px-5 py-3">
+                <span class="text-xs px-2 py-0.5 rounded-full ${VERDICT_BADGE[e.verdict] || ''}">${e.verdict}</span>
+            </td>
+            <td class="px-5 py-3 text-gray-300">${(e.confidence * 100).toFixed(0)}%</td>
+            <td class="px-5 py-3 text-gray-400 text-xs capitalize">${e.source}</td>
+            <td class="px-5 py-3 text-gray-400 text-xs">${e.analyzed_at.slice(0,16).replace('T',' ')}</td>
+            <td class="px-5 py-3" onclick="event.stopPropagation()">
+                <div class="flex gap-1">
+                    <button title="Force re-analyze" onclick="reanalyze('${e.url}')"
+                            class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition-colors">🔄</button>
+                    <button title="Add to whitelist" onclick="quickList('whitelist','${e.domain}')"
+                            class="text-xs bg-green-900/40 hover:bg-green-800/60 px-2 py-1 rounded transition-colors">✅</button>
+                    <button title="Add to blacklist" onclick="quickList('blacklist','${e.domain}')"
+                            class="text-xs bg-red-900/40 hover:bg-red-800/60 px-2 py-1 rounded transition-colors">🚫</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function changePage(delta) {
+    const np = currentPage + delta;
+    if (np >= 1 && np <= totalPages) loadTable(np);
+}
+
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadTable(1), 400);
+}
+
+// ── Detail Modal ──────────────────────────────────────────────────────────────
+function showDetail(e) {
+    const indicators = (e.risk_indicators || []).map(r =>
+        `<li class="text-yellow-300">• ${r}</li>`).join('') || '<li class="text-gray-500">None</li>';
+
+    document.getElementById('modal-content').innerHTML = `
+        <div>
+            <p class="text-xs text-gray-400 mb-1">URL</p>
+            <p class="text-blue-400 break-all text-xs">${e.url}</p>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+            <div><p class="text-xs text-gray-400 mb-1">Verdict</p>
+                <span class="text-xs px-2 py-0.5 rounded-full ${VERDICT_BADGE[e.verdict] || ''}">${e.verdict}</span></div>
+            <div><p class="text-xs text-gray-400 mb-1">Confidence</p>
+                <p class="font-medium">${(e.confidence*100).toFixed(0)}%</p></div>
+            <div><p class="text-xs text-gray-400 mb-1">Action</p>
+                <p class="font-medium capitalize">${e.recommended_action}</p></div>
+        </div>
+        <div><p class="text-xs text-gray-400 mb-1">Risk Indicators</p>
+            <ul class="space-y-1 text-sm">${indicators}</ul></div>
+        <div><p class="text-xs text-gray-400 mb-1">Reason</p>
+            <p class="text-gray-300 text-xs leading-relaxed">${e.reason}</p></div>
+        <div class="grid grid-cols-2 gap-3 text-xs text-gray-400">
+            <div>Source: <span class="text-gray-200 capitalize">${e.source}</span></div>
+            <div>Redirects: <span class="text-gray-200">${e.redirect_count}</span></div>
+            <div>Analyzed: <span class="text-gray-200">${e.analyzed_at.slice(0,16).replace('T',' ')}</span></div>
+        </div>`;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
+}
+
+document.getElementById('modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+});
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+async function reanalyze(url) {
+    await fetch('/dashboard/api/cache?url=' + encodeURIComponent(url), { method: 'DELETE' });
+    loadTable(currentPage);
+}
+
+async function quickList(list, domain) {
+    await fetch('/' + list, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern: domain })
+    });
+    loadLists();
+}
+
+async function addList(list) {
+    const input = document.getElementById(list === 'whitelist' ? 'wl-input' : 'bl-input');
+    const val = input.value.trim();
+    if (!val) return;
+    await fetch('/' + list, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern: val })
+    });
+    input.value = '';
+    loadLists();
+}
+
+async function removeFromList(list, domain) {
+    await fetch('/' + list + '/' + encodeURIComponent(domain), { method: 'DELETE' });
+    loadLists();
+}
+
+async function loadLists() {
+    const [wl, bl] = await Promise.all([
+        fetch('/whitelist').then(r => r.json()),
+        fetch('/blacklist').then(r => r.json()),
+    ]);
+
+    document.getElementById('wl-count').textContent = wl.count + ' entries';
+    document.getElementById('bl-count').textContent = bl.count + ' entries';
+
+    const renderList = (entries, list) => entries.map(e => `
+        <div class="flex items-center justify-between bg-gray-800 rounded px-2 py-1">
+            <span class="text-gray-300">${e.domain}</span>
+            <button onclick="removeFromList('${list}','${e.domain}')" class="text-gray-500 hover:text-red-400 ml-2">×</button>
+        </div>`).join('') || '<p class="text-gray-600 text-center py-2">Empty</p>';
+
+    document.getElementById('wl-list').innerHTML = renderList(wl.entries, 'whitelist');
+    document.getElementById('bl-list').innerHTML = renderList(bl.entries, 'blacklist');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadStats();
+loadTable(1);
+loadLists();
+setInterval(() => { loadStats(); loadTable(currentPage); }, 30000);
+</script>
+{% endblock %}

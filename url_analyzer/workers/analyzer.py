@@ -9,6 +9,7 @@ from url_analyzer.services.list_service import list_service
 from url_analyzer.services.openai_service import openai_service
 from url_analyzer.services.playwright_service import playwright_service
 from url_analyzer.storage.job_store import job_store
+from url_analyzer.storage.analysis_history import analysis_history
 from url_analyzer.storage.verdict_cache import verdict_cache
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ async def _process_job(job: Job) -> None:
                     recommended_action="allow" if is_white else "block",
                 )
                 logger.info("%s matched %s → %s", url, list_type, verdict.recommended_action)
+                await analysis_history.record(url, verdict, source=list_type)
                 await job_store.append_result(job.job_id, verdict)
                 continue
             # ── Check cache SQLite ────────────────────────────────────────────
@@ -99,6 +101,7 @@ async def _process_job(job: Job) -> None:
             # ── Analisi completa Playwright + OpenAI ─────────────────────────
             verdict = await _analyze_with_chain(url)
             await verdict_cache.set(url, verdict)
+            await analysis_history.record(url, verdict, source="job")
             await job_store.append_result(job.job_id, verdict)
         except Exception as exc:
             logger.error("Error analyzing %s: %s", url, exc)

@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import unquote
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
-from fastapi.responses import PlainTextResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Security, status
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from url_analyzer.config import settings
 from url_analyzer.models.requests import ListEntryRequest, URLAnalysisRequest
@@ -28,6 +30,7 @@ from url_analyzer.models.responses import (
 from url_analyzer.services.job_service import cancel_job, create_job, get_job, get_queue
 from url_analyzer.services.list_service import list_service
 from url_analyzer.services.playwright_service import playwright_service
+from url_analyzer.storage.analysis_history import analysis_history
 from url_analyzer.storage.verdict_cache import verdict_cache
 from url_analyzer.workers.analyzer import _analyze_simple, _analyze_with_chain, cleanup_loop, start_workers
 
@@ -81,6 +84,9 @@ async def lifespan(app: FastAPI):
     await verdict_cache.init()
     logger.info("Verdict cache initialized")
 
+    await analysis_history.init()
+    logger.info("Analysis history initialized")
+
     # eicar.org è il dominio EICAR standard usato da Trellix IVX come health check URL.
     # Deve sempre rispondere malicious — lo aggiungiamo alla blacklist se non presente.
     if not list_service.check_url("https://secure.eicar.org/"):
@@ -112,6 +118,25 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(SessionMiddleware, secret_key=settings.dashboard_secret_key or "dev-secret-change-me")
+
+templates = Jinja2Templates(directory="url_analyzer/templates")
+
+
+# ── Dashboard helpers ─────────────────────────────────────────────────────────
+
+def _dashboard_user(request: Request) -> Optional[str]:
+    return request.session.get("dashboard_user")
+
+def _require_dashboard_auth(request: Request) -> str:
+    user = _dashboard_user(request)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_302_FOUND,
+            headers={"Location": "/dashboard/login"},
+        )
+    return user
 
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
@@ -277,6 +302,7 @@ async def trellix_analyze(
         verdict = await asyncio.wait_for(_analyze_simple(url), timeout=55.0)
 
         await verdict_cache.set(url, verdict)
+        await analysis_history.record(url, verdict, source="trellix")
 
         sig_parts = verdict.risk_indicators[:3]
         signature = " | ".join(sig_parts) if sig_parts else verdict.verdict.upper()
@@ -384,6 +410,71 @@ async def get_ioc_feed(
         filters={"verdict": verdict, "since": since, "limit": limit},
         entries=[IOCEntry(**e) for e in entries],
     )
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@app.get("/dashboard/login", tags=["Dashboard"], include_in_schema=False)
+async def dashboard_login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html", {"error": None})
+
+
+@app.post("/dashboard/login", tags=["Dashboard"], include_in_schema=False)
+async def dashboard_login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+):
+    if (
+        settings.dashboard_password
+        and username == settings.dashboard_username
+        and password == settings.dashboard_password
+    ):
+        request.session["dashboard_user"] = username
+        return RedirectResponse(url="/dashboard", status_code=302)
+    return templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"}, status_code=401)
+
+
+@app.get("/dashboard/logout", tags=["Dashboard"], include_in_schema=False)
+async def dashboard_logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/dashboard/login", status_code=302)
+
+
+@app.get("/dashboard", tags=["Dashboard"], include_in_schema=False)
+async def dashboard(request: Request):
+    user = _dashboard_user(request)
+    if not user:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    return templates.TemplateResponse(request, "dashboard.html", {"user": user})
+
+
+@app.get("/dashboard/api/stats", tags=["Dashboard"])
+async def dashboard_stats(request: Request):
+    _require_dashboard_auth(request)
+    return await analysis_history.get_stats()
+
+
+@app.get("/dashboard/api/analyses", tags=["Dashboard"])
+async def dashboard_analyses(
+    request: Request,
+    verdict: Optional[str] = Query(None),
+    since: Optional[str] = Query(None, enum=["1h", "24h", "7d", "30d"]),
+    q: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+):
+    _require_dashboard_auth(request)
+    since_hours = _SINCE_MAP.get(since) if since else None
+    return await analysis_history.get_recent(
+        verdict=verdict, since_hours=since_hours, domain=q, page=page
+    )
+
+
+@app.delete("/dashboard/api/cache", tags=["Dashboard"])
+async def dashboard_invalidate_cache(request: Request, url: str = Query(...)):
+    _require_dashboard_auth(request)
+    removed = await verdict_cache.remove_url(url)
+    return {"removed": removed, "url": url}
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

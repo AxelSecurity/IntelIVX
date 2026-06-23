@@ -108,6 +108,20 @@ class VerdictCache:
                 await db.commit()
         logger.info("Cache SET: %s → %s (TTL %d giorni)", url, verdict.verdict, ttl_days)
 
+    async def remove_url(self, url: str) -> bool:
+        """Rimuove un URL dalla cache per forzare una ri-analisi."""
+        normalized = _normalize(url)
+        async with self._lock:
+            async with aiosqlite.connect(self._db_path) as db:
+                cursor = await db.execute(
+                    "DELETE FROM verdict_cache WHERE url = ?", (normalized,)
+                )
+                await db.commit()
+                removed = cursor.rowcount > 0
+        if removed:
+            logger.info("Cache INVALIDATED: %s", url)
+        return removed
+
     async def get_ioc_feed(
         self,
         verdicts: list[str],
