@@ -74,7 +74,13 @@ class VerdictCache:
         return None
 
     async def set(self, url: str, verdict: URLVerdict) -> None:
-        """Salva il verdetto con TTL basato sul tipo."""
+        """Salva il verdetto con TTL basato sul tipo.
+        I verdetti 'safe' non vengono cachati: ogni URL safe viene sempre ri-analizzato
+        per rilevare eventuali compromissioni future.
+        """
+        if verdict.verdict == "safe":
+            logger.debug("Cache SKIP (safe): %s", url)
+            return
         normalized = _normalize(url)
         domain = urlparse(url).hostname or ""
         ttl_days = TTL_DAYS.get(verdict.verdict, 7)
