@@ -62,6 +62,13 @@ Domain-level matching with subdomain support. `paypal.com` matches `www.paypal.c
 Blacklist takes precedence over whitelist. Persisted to `lists.json`.
 Check order: whitelist/blacklist → cache → full analysis.
 
+### IOC Feed endpoint (GET /ioc)
+Exposes cached malicious/suspicious URLs as a threat intelligence feed for security tools.
+Supports three output formats: `json` (SIEM), `txt` (one URL per line for firewall/proxy
+blocklists), `csv`. Filterable by verdict type and time window (1h/24h/7d/30d).
+Auth via `IOC_API_TOKEN` Bearer token (separate from `TRELLIX_API_TOKEN`). If empty, open.
+The endpoint reads directly from SQLite via `verdict_cache.get_ioc_feed()`.
+
 ### OCR for visual brand impersonation (playwright_service.py)
 After page load, we take a viewport screenshot and run Tesseract OCR on it.
 This detects brand names embedded in images/logos (e.g. university phishing where
@@ -154,6 +161,7 @@ Runtime data (excluded from git):
 | `AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | Service principal for Foundry auth |
 | `PLAYWRIGHT_OCR` | Set `false` to disable OCR (faster, less accurate) |
 | `TRELLIX_API_TOKEN` | Empty = no auth on Trellix endpoint |
+| `IOC_API_TOKEN` | Empty = no auth on /ioc endpoint |
 
 ---
 
