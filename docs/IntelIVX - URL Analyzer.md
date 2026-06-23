@@ -30,6 +30,7 @@ Servizio di analisi URL per pipeline di email security. Riceve URL estratti da e
 - [[#Integrazione Trellix IVX]]
 - [[#Azure AI Foundry Agent]]
 - [[#IOC Feed]]
+- [[#Web Dashboard]]
 - [[#API Reference]]
 - [[#Configurazione e deployment]]
 - [[#Decisioni architetturali]]
@@ -48,12 +49,14 @@ Servizio di analisi URL per pipeline di email security. Riceve URL estratti da e
 - Playwright 1.60 (Chromium headless)
 - Tesseract OCR
 - Azure AI Foundry Agent (GPT-4o)
-- SQLite (aiosqlite)
+- SQLite (aiosqlite) — verdict cache + analysis history
+- Jinja2 + Tailwind CSS + Chart.js — web dashboard
 - Docker (`mcr.microsoft.com/playwright/python:v1.60.0-jammy`)
 
 **Repository:** https://github.com/AxelSecurity/IntelIVX
 **Porta:** 8081
 **Swagger UI:** http://localhost:8081/docs
+**Dashboard:** http://localhost:8081/dashboard
 
 ---
 
@@ -63,6 +66,7 @@ Servizio di analisi URL per pipeline di email security. Riceve URL estratti da e
 graph TD
     A[Email Wrapper] -->|POST /analyze/urls| B[FastAPI :8081]
     C[Trellix IVX] -->|GET /trellix/analyze| B
+    P[Browser /dashboard] -->|GET /dashboard| B
     B --> D{Whitelist/Blacklist?}
     D -->|HIT| E[Risposta immediata]
     D -->|MISS| F{SQLite Cache?}
@@ -71,8 +75,9 @@ graph TD
     G --> H[Chromium headless]
     H --> I[Redirect chain tracking<br/>SSL inspection<br/>OCR Tesseract]
     I --> J[Azure AI Foundry Agent<br/>GPT-4o]
-    J --> K[Salva in SQLite Cache]
+    J --> K[SQLite Cache + Analysis History]
     K --> E
+    K --> Q[Dashboard /dashboard/api/]
 ```
 
 ### Struttura file progetto
@@ -92,7 +97,12 @@ url_analyzer/
 │   └── list_service.py        # Whitelist/Blacklist CRUD
 ├── storage/
 │   ├── job_store.py           # In-memory job store con TTL
-│   └── verdict_cache.py       # SQLite verdict cache (aiosqlite)
+│   ├── verdict_cache.py       # SQLite verdict cache (aiosqlite)
+│   └── analysis_history.py   # SQLite audit log permanente (tutti i verdetti)
+├── templates/
+│   ├── base.html              # Layout comune dashboard
+│   ├── login.html             # Pagina login
+│   └── dashboard.html         # Dashboard principale
 └── workers/
     └── analyzer.py            # Worker loop + funzioni di analisi
 ```
@@ -514,6 +524,84 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8081/ioc"
 
 ---
 
+## Web Dashboard
+
+Interfaccia web autenticata per visualizzare tutte le analisi, statistiche e gestire le liste.
+
+**URL:** http://localhost:8081/dashboard
+
+### Autenticazione
+
+Login con username/password configurati nel `.env`:
+```env
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=<password>
+DASHBOARD_SECRET_KEY=<uuidv4>
+```
+
+Sessione mantenuta tramite cookie firmato (`itsdangerous` / `SessionMiddleware`).
+
+### Funzionalità
+
+**Stats cards (3 card)**
+```
+[ Total analisi ]  [ Threats 🔴 Malicious + 🟡 Suspicious ]  [ Safe 🟢 ]
+```
+
+**Grafici (Chart.js)**
+- Pie chart: distribuzione verdetti
+- Bar chart: analisi per giorno (ultimi 7 giorni, stacked malicious/suspicious/safe)
+
+**Tabella analisi**
+- Filtri: verdict | periodo (1h/24h/7d/30d/all) | ricerca dominio
+- Paginazione (50 per pagina)
+- Click su riga → **modal dettaglio** con risk indicators, reason, redirect count, source
+- Azioni per-riga:
+  - 🔄 **Force re-analyze** — rimuove dalla cache, forzarà nuova analisi alla prossima chiamata
+  - ✅ **Whitelist** — aggiunge il dominio alla whitelist
+  - 🚫 **Blacklist** — aggiunge il dominio alla blacklist
+
+**Gestione Liste**
+- Whitelist e Blacklist side-by-side
+- Form aggiunta rapida + bottone rimozione per ogni entry
+
+**Auto-refresh:** aggiornamento automatico ogni 30 secondi
+
+### Sorgente dati: Analysis History
+
+> [!NOTE] Differenza da Verdict Cache
+> La dashboard legge dalla tabella `analysis_history` (audit log permanente), non dal
+> `verdict_cache`. La history registra **TUTTE** le analisi incluse le `safe`, senza TTL.
+> Il verdict_cache è solo per la performance (skip di ri-analisi).
+
+**Schema `analysis_history`:**
+```sql
+CREATE TABLE analysis_history (
+    id, url, domain, verdict, confidence,
+    risk_indicators TEXT,   -- JSON array
+    reason, recommended_action,
+    final_url, redirect_count,
+    source TEXT,            -- job | trellix | whitelist | blacklist
+    analyzed_at TEXT
+);
+```
+
+### API endpoint dashboard
+
+```bash
+# Statistiche aggregate
+GET /dashboard/api/stats
+→ {total, malicious, suspicious, safe, by_day: [{day, malicious, suspicious, safe}]}
+
+# Lista analisi con filtri
+GET /dashboard/api/analyses?verdict=malicious&since=24h&q=paypal&page=1
+
+# Invalida cache (force re-analyze)
+DELETE /dashboard/api/cache?url=https://example.com
+```
+
+---
+
 ## API Reference
 
 ### Endpoint completi
@@ -524,6 +612,12 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8081/ioc"
 | GET | `/jobs/{id}` | Polling risultato job |
 | DELETE | `/jobs/{id}` | Cancellazione job |
 | GET | `/trellix/analyze?url=...` | Analisi sincrona Trellix-compatible |
+| GET | `/dashboard` | Web dashboard (auth richiesta) |
+| GET/POST | `/dashboard/login` | Login dashboard |
+| GET | `/dashboard/logout` | Logout dashboard |
+| GET | `/dashboard/api/stats` | Statistiche aggregate (AJAX) |
+| GET | `/dashboard/api/analyses` | Lista analisi paginata (AJAX) |
+| DELETE | `/dashboard/api/cache` | Invalida URL dalla cache (AJAX) |
 | GET | `/ioc` | IOC feed (JSON/TXT/CSV) per strumenti di sicurezza |
 | GET | `/whitelist` | Lista whitelist |
 | POST | `/whitelist` | Aggiungi a whitelist |
@@ -578,6 +672,11 @@ TRELLIX_API_TOKEN=<bearer-token>
 
 # IOC Feed (opzionale)
 IOC_API_TOKEN=<bearer-token>
+
+# Dashboard web UI
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=<password-sicura>
+DASHBOARD_SECRET_KEY=<uuidv4>
 ```
 
 ### docker-compose.yml
@@ -627,6 +726,21 @@ Il wrapper email invia batch di URL (fino a 50). Analizzare in modo sincrono blo
 
 ### Perché SQLite invece di Redis/Postgres?
 Nessun servizio aggiuntivo da gestire. SQLite è sufficiente per il volume di URL analizzati. Persiste tra i restart del container tramite volume Docker.
+
+### Perché la dashboard usa `analysis_history` e non `verdict_cache`?
+Il `verdict_cache` ha TTL e non salva i `safe`. Per la dashboard serve la storia completa
+di TUTTE le analisi senza scadenza. `analysis_history` è un audit log separato: raccoglie
+ogni verdetto (safe incluso) senza TTL. Il `verdict_cache` resta ottimizzato per performance.
+
+### Perché Jinja2 + Tailwind CDN invece di un framework SPA (React/Vue)?
+La dashboard è server-rendered con Jinja2 e JS vanilla + Chart.js CDN. Non richiede build
+step, npm, o container separati. Tutto gira nello stesso container Docker su porta 8081.
+Questa scelta minimizza la complessità operativa per uno strumento interno.
+
+### Perché `analysis_history` anche per i record da whitelist/blacklist?
+Anche un "allow" da whitelist è una decisione di sicurezza. Loggarlo con `source=whitelist`
+permette di vedere nella dashboard quanti URL sono stati risolti via lista senza analisi AI,
+utile per audit e per identificare se la whitelist è usata correttamente.
 
 ### Perché l'IOC Feed legge dalla SQLite cache e non dal job store?
 Il job store è in-memory con TTL di 1 ora — perderebbe i dati ad ogni restart. La SQLite
