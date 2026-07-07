@@ -37,6 +37,52 @@ from url_analyzer.workers.analyzer import _analyze_simple, _analyze_with_chain, 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+# ── Trellix signature builder ──────────────────────────────────────────────────
+
+# Brand names to detect in risk_indicators for concise signature generation.
+_KNOWN_BRANDS = [
+    "PayPal", "Google", "Microsoft", "Apple", "Amazon",
+    "Facebook", "Instagram", "Netflix", "Spotify", "Dropbox",
+    "DHL", "UPS", "FedEx", "Poste", "Agenzia delle Entrate",
+    "INPS", "UniCredit", "Intesa Sanpaolo", "Banca",
+]
+
+def _build_trellix_signature(verdict: str) -> str:
+    """Genera una signature breve (max 4-5 parole) per Trellix IVX."""
+    if verdict == "malicious":
+        return "Phishing Page Detected"
+    if verdict == "suspicious":
+        return "Suspicious URL Detected"
+    return "No Threats Detected"
+
+
+def _build_trellix_signature_from_indicators(verdict: str, risk_indicators: list[str]) -> str:
+    """Genera una signature concisa basata sui risk indicators."""
+    if verdict == "safe":
+        return "No Threats Detected"
+
+    # Cerca brand impersonation
+    joined = " ".join(risk_indicators).lower()
+    for brand in _KNOWN_BRANDS:
+        if brand.lower() in joined:
+            return f"Phishing: {brand} Impersonation"
+
+    # Cerca pattern specifici
+    if any("bridge" in ri.lower() or "external_links" in ri.lower() for ri in risk_indicators):
+        return "Suspicious Bridge Page"
+    if any("credential" in ri.lower() or "login form on http" in ri.lower() for ri in risk_indicators):
+        return "Credential Harvesting Detected"
+    if any("ssl" in ri.lower() or "certificate" in ri.lower() for ri in risk_indicators):
+        return "Suspicious SSL Certificate"
+    if any("ocr_detected_text" in ri.lower() for ri in risk_indicators):
+        return "Social Engineering Lure"
+
+    # Fallback
+    if verdict == "malicious":
+        return "Phishing Page Detected"
+    return "Suspicious URL Detected"
+
+
 # ── Trellix Token Auth ────────────────────────────────────────────────────────
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -285,8 +331,9 @@ async def trellix_analyze(
     # ── 2. Check cache SQLite ─────────────────────────────────────────────────
     cached = await verdict_cache.get(url)
     if cached:
-        sig_parts = cached.risk_indicators[:3]
-        signature = " | ".join(sig_parts) if sig_parts else cached.verdict.upper()
+        signature = _build_trellix_signature_from_indicators(
+            cached.verdict, cached.risk_indicators
+        )
         return TrellixAnalysisResponse(
             result=TrellixResult(
                 verdict=cached.verdict,
@@ -304,8 +351,9 @@ async def trellix_analyze(
         await verdict_cache.set(url, verdict)
         await analysis_history.record(url, verdict, source="trellix")
 
-        sig_parts = verdict.risk_indicators[:3]
-        signature = " | ".join(sig_parts) if sig_parts else verdict.verdict.upper()
+        signature = _build_trellix_signature_from_indicators(
+            verdict.verdict, verdict.risk_indicators
+        )
 
         return TrellixAnalysisResponse(
             result=TrellixResult(
