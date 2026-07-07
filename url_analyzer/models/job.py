@@ -53,6 +53,7 @@ class URLVerdict(BaseModel):
     recommended_action: str  # "allow" | "quarantine" | "block"
     ssl_info: Optional[SSLInfo] = None
     chain_verdicts: list["URLVerdict"] = []
+    external_links: list[str] = []  # link esterni trovati nella pagina (per IOC feed)
 
 
 URLVerdict.model_rebuild()

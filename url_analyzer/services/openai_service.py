@@ -101,6 +101,7 @@ class FoundryAgentService:
         data = await self._call_agent(user_message)
         verdict = URLVerdict(**data)
         verdict.ssl_info = playwright_result.ssl_info
+        verdict.external_links = playwright_result.external_links
         return verdict
 
     async def synthesize_chain(self, verdicts: list[URLVerdict]) -> URLVerdict:

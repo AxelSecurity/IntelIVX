@@ -32,7 +32,13 @@ from url_analyzer.services.list_service import list_service
 from url_analyzer.services.playwright_service import playwright_service
 from url_analyzer.storage.analysis_history import analysis_history
 from url_analyzer.storage.verdict_cache import verdict_cache
-from url_analyzer.workers.analyzer import _analyze_simple, _analyze_with_chain, cleanup_loop, start_workers
+from url_analyzer.workers.analyzer import (
+    _analyze_simple,
+    _analyze_with_chain,
+    _cache_external_links,
+    cleanup_loop,
+    start_workers,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -349,6 +355,7 @@ async def trellix_analyze(
         verdict = await asyncio.wait_for(_analyze_simple(url), timeout=55.0)
 
         await verdict_cache.set(url, verdict)
+        await _cache_external_links(verdict)
         await analysis_history.record(url, verdict, source="trellix")
 
         signature = _build_trellix_signature_from_indicators(

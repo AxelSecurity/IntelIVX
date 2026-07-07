@@ -17,6 +17,34 @@ logger = logging.getLogger(__name__)
 MAX_CHAIN_DEPTH = 5
 
 
+async def _cache_external_links(verdict: URLVerdict) -> None:
+    """Salva nella cache anche gli URL esterni trovati nella pagina,
+    così che finiscano nel feed IOC invece della sola pagina ponte."""
+    if verdict.verdict not in ("malicious", "suspicious"):
+        return
+    if not verdict.external_links:
+        return
+    for ext_url in verdict.external_links:
+        ext_verdict = URLVerdict(
+            url=ext_url,
+            verdict=verdict.verdict,
+            confidence=verdict.confidence,
+            risk_indicators=[
+                f"External link from bridge page: {verdict.url}"
+            ],
+            reason=(
+                f"Destination of external link found on {verdict.url}. "
+                f"Original reason: {verdict.reason[:300]}"
+            ),
+            recommended_action=verdict.recommended_action,
+        )
+        await verdict_cache.set(ext_url, ext_verdict)
+    logger.info(
+        "Cached %d external links for IOC feed from %s",
+        len(verdict.external_links), verdict.url,
+    )
+
+
 async def _analyze_simple(url: str) -> URLVerdict:
     """
     Analisi rapida: singola sessione Playwright + singola chiamata AI.
@@ -101,6 +129,7 @@ async def _process_job(job: Job) -> None:
             # ── Analisi completa Playwright + OpenAI ─────────────────────────
             verdict = await _analyze_with_chain(url)
             await verdict_cache.set(url, verdict)
+            await _cache_external_links(verdict)
             await analysis_history.record(url, verdict, source="job")
             await job_store.append_result(job.job_id, verdict)
         except Exception as exc:
