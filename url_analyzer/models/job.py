@@ -35,6 +35,7 @@ class PlaywrightResult(BaseModel):
     has_password_field: bool
     has_file_download: bool
     external_scripts: list[str]
+    external_links: list[str] = []     # href link esterni (puntano a dominio diverso dall'origine)
     suspicious_keywords: list[str]
     ocr_detected_text: str = ""     # Testo estratto via OCR dal viewport (include testo in loghi/immagini)
     load_time_ms: int

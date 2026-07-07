@@ -206,6 +206,7 @@ class PlaywrightService:
         has_password_field = False
         has_file_download = False
         external_scripts: list[str] = []
+        external_links: list[str] = []
         found_keywords: list[str] = []
         screenshot_b64: Optional[str] = None
         ocr_text: str = ""
@@ -231,6 +232,58 @@ class PlaywrightService:
                 external_scripts = [
                     s for s in script_handles if s and not s.startswith(origin)
                 ]
+
+                # Estrai link esterni per rilevare pagine "ponte" verso phishing.
+                # Copre tre pattern comuni: <a href>, onclick, e data-url.
+                raw_links: list[str] = []
+
+                # Pattern 1: <a href="...">
+                a_handles = await page.eval_on_selector_all(
+                    "a[href]",
+                    "els => els.map(e => e.getAttribute('href'))",
+                )
+                raw_links.extend(a_handles)
+
+                # Pattern 2: onclick="window.location='...'" o onclick="location.href='...'"
+                onclick_handles = await page.eval_on_selector_all(
+                    "[onclick]",
+                    "els => els.map(e => e.getAttribute('onclick'))",
+                )
+                for oc in onclick_handles:
+                    if oc:
+                        urls = re.findall(
+                            r"""(?:location\.href|window\.location|location)\s*=\s*['"]([^'"]+)['"]""",
+                            oc,
+                        )
+                        raw_links.extend(urls)
+
+                # Pattern 3: data-url, data-href, data-link (framework common)
+                for attr in ("data-url", "data-href", "data-link"):
+                    handles = await page.eval_on_selector_all(
+                        f"[{attr}]",
+                        f"els => els.map(e => e.getAttribute('{attr}'))",
+                    )
+                    raw_links.extend(handles)
+
+                external_links: list[str] = []
+                seen_external: set[str] = set()
+                for href in raw_links:
+                    if not href or not isinstance(href, str):
+                        continue
+                    href = href.strip()
+                    if not href.startswith(("http://", "https://")):
+                        continue
+                    if href.startswith(origin):
+                        continue
+                    key = href.lower().rstrip("/")
+                    if key not in seen_external:
+                        seen_external.add(key)
+                        external_links.append(href)
+
+                logger.info(
+                    "Extracted %d external links for %s: %s",
+                    len(external_links), url, external_links[:5],
+                )
 
                 body_text = (await page.locator("body").inner_text()).lower()
                 found_keywords = [kw for kw in SUSPICIOUS_KEYWORDS if kw in body_text]
@@ -287,6 +340,7 @@ class PlaywrightService:
             has_password_field=has_password_field,
             has_file_download=has_file_download,
             external_scripts=external_scripts[:20],
+            external_links=external_links[:20],
             suspicious_keywords=found_keywords,
             ocr_detected_text=ocr_text,
             load_time_ms=load_time_ms,
