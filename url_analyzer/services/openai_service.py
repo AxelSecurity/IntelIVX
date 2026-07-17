@@ -105,7 +105,10 @@ class FoundryAgentService:
         return verdict
 
     async def synthesize_chain(self, verdicts: list[URLVerdict]) -> URLVerdict:
-        payload = [v.model_dump(exclude={"chain_verdicts"}) for v in verdicts]
+        payload = [
+            v.model_dump(exclude={"chain_verdicts", "external_links", "ssl_info"})
+            for v in verdicts
+        ]
         user_message = _SYNTHESIZE_PREFIX + json.dumps(payload, indent=2)
 
         data = await self._call_agent(user_message)

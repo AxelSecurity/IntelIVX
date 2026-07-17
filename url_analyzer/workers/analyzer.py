@@ -81,7 +81,7 @@ async def _analyze_with_chain(url: str) -> URLVerdict:
     hop_verdicts: list[URLVerdict] = [v for v in results if v is not None]
 
     if not hop_verdicts:
-        return main_verdict
+        return main_verdict  # già passato per _apply_aitm_overrides
 
     # La sintesi riceve tutti i verdetti (originale + hop) per una valutazione completa,
     # ma chain_verdicts nella risposta mostra solo gli hop (evita duplicazione della URL originale).
@@ -89,6 +89,7 @@ async def _analyze_with_chain(url: str) -> URLVerdict:
     final_verdict = await openai_service.synthesize_chain(all_verdicts)
     final_verdict.ssl_info = main_verdict.ssl_info
     final_verdict.chain_verdicts = hop_verdicts
+    final_verdict.external_links = main_verdict.external_links
     return final_verdict
 
 
