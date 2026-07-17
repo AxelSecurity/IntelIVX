@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
@@ -61,8 +62,14 @@ async def _analyze_with_chain(url: str) -> URLVerdict:
     pw_result = await playwright_service.analyze(url)
     main_verdict = await openai_service.analyze(pw_result)
 
-    # redirect_chain[0] is the original URL — skip it, take the rest up to MAX_CHAIN_DEPTH
-    chain_urls = pw_result.redirect_chain[1:][:MAX_CHAIN_DEPTH]
+    # redirect_chain[0] is the original URL — skip it, take the rest up to MAX_CHAIN_DEPTH.
+    # Filtra anche URL identiche all'originale (es. stesso URL con parametri di tracking).
+    chain_urls = [
+        u for u in pw_result.redirect_chain[1:][:MAX_CHAIN_DEPTH]
+        if urlparse(u).hostname != urlparse(url).hostname
+        or urlparse(u).path.rstrip("/") != urlparse(url).path.rstrip("/")
+        or urlparse(u).query != urlparse(url).query
+    ]
     if not chain_urls:
         return main_verdict
 
